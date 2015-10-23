@@ -1,0 +1,68 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  configure)
+    logdir="/var/log/nginx"
+    # Ensure secure permissions (CVE-2013-0337)
+    # http://bugs.debian.org/701112
+    #
+    # nginx uses 0755 for log files making them world readable,
+    # we fix that by using 0750 for the log directory.
+    #
+    # Allow local admin to override:
+    # e.g. dpkg-statoverride --add root adm 0755 /var/log/nginx
+    if ! dpkg-statoverride --list "$logdir" >/dev/null; then
+      chown www-data:adm $logdir
+      chmod 0750 $logdir
+    fi
+    # If a symlink doesn't exist and can be created, then create it.
+    if [ -z $2 ] && [ ! -e /etc/nginx/sites-enabled/default ] &&
+       [ -d /etc/nginx/sites-enabled ] && [ -d /etc/nginx/sites-available ]; then
+      ln -s /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+    fi
+    ;;
+
+  abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+  *)
+    echo "postinst called with unknown argument \`$1'" >&2
+    exit 1
+    ;;
+esac
+
+case "$1" in
+  abort-upgrade|abort-remove|abort-deconfigure|configure)
+    ;;
+
+  *)
+    echo "postinst called with unknown argument \`$1'" >&2
+    exit 1
+    ;;
+esac
+
+if [ -x /etc/init.d/nginx ]; then
+  if [ -f /run/nginx.pid ] && pidof /usr/sbin/nginx >/dev/null; then
+    NGX_PID=`cat /run/nginx.pid`
+    if kill -s USR2 $NGX_PID 2>/dev/null; then
+      while [ ! -s /run/nginx.pid.oldbin ] || [ ! -s /run/nginx.pid ]; do
+        cnt=`expr $cnt + 1`
+        if [ $cnt -gt 10 ]; then
+          kill -s KILL $NGX_PID
+          invoke-rc.d nginx start
+          exit 0
+        fi
+        sleep 1
+      done
+      NGX_OLD_PID=`cat /run/nginx.pid.oldbin`
+      kill -s QUIT $NGX_OLD_PID
+    fi
+  else
+    invoke-rc.d nginx start || exit $?
+  fi
+fi
+
+#DEBHELPER#
+
+exit 0
